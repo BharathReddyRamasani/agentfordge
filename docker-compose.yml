@@ -1,0 +1,80 @@
+# AgentForge local stack: backend API + background worker + PostgreSQL + Redis.
+# The product frontend is developed separately (Manus) and connects to http://localhost:8000.
+# Start everything with:  docker compose up --build
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: agentforge
+      POSTGRES_PASSWORD: agentforge
+      POSTGRES_DB: agentforge
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentforge -d agentforge"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://agentforge:agentforge@postgres:5432/agentforge
+      REDIS_URL: redis://redis:6379/0
+      WORKER_MODE: thread
+      APP_ENV: production
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - workspace:/srv/agentforge/workspace
+      - ragdata:/srv/agentforge/data/rag
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://agentforge:agentforge@postgres:5432/agentforge
+      REDIS_URL: redis://redis:6379/0
+      WORKER_MODE: external
+      APP_ENV: production
+    command: ["python", "-m", "app.workers.worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    volumes:
+      - workspace:/srv/agentforge/workspace
+      - ragdata:/srv/agentforge/data/rag
+
+volumes:
+  pgdata:
+  redisdata:
+  workspace:
+  ragdata:
